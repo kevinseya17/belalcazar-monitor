@@ -13,8 +13,10 @@ from pdf_generator import generar_pdf_comprobante
 
 NIT = os.environ.get("NIT", "901369891")
 PASSWORD = os.environ.get("PASSWORD", "901369891")
-WHATSAPP_PHONE = os.environ.get("WHATSAPP_PHONE", "573137493049")
-CALLMEBOT_APIKEY = os.environ.get("CALLMEBOT_APIKEY", "5358764")
+DESTINATARIOS = [
+    {"phone": "573137493049", "apikey": "5358764"},
+    {"phone": "573142407755", "apikey": "3564255"}
+]
 
 API_BASE = "https://proveedor.supermercadobelalcazar.com/api"
 VISTOS_FILE = "vistos.json"
@@ -47,20 +49,20 @@ def guardar_vistos(vistos):
         json.dump(list(vistos), f, indent=2)
 
 def enviar_alerta_whatsapp(mensaje: str):
-    clean_phone = WHATSAPP_PHONE.replace("+", "").replace(" ", "").strip()
     encoded_text = urllib.parse.quote(mensaje)
-    url = f"https://api.callmebot.com/whatsapp.php?phone={clean_phone}&text={encoded_text}&apikey={CALLMEBOT_APIKEY}"
-    try:
-        resp = requests.get(url, timeout=20)
-        if resp.status_code == 200:
-            print(f"[OK] Alerta enviada exitosamente a WhatsApp ({clean_phone})")
-            return True
-        else:
-            print(f"[!] Error CallMeBot: {resp.status_code} {resp.text}")
-            return False
-    except Exception as e:
-        print(f"[!] Error WhatsApp: {e}")
-        return False
+    for dest in DESTINATARIOS:
+        phone = dest["phone"].replace("+", "").replace(" ", "").strip()
+        apikey = dest["apikey"]
+        url = f"https://api.callmebot.com/whatsapp.php?phone={phone}&text={encoded_text}&apikey={apikey}"
+        try:
+            resp = requests.get(url, timeout=20)
+            if resp.status_code == 200:
+                print(f"[OK] Alerta enviada exitosamente a WhatsApp ({phone})")
+            else:
+                print(f"[!] Error CallMeBot ({phone}): {resp.status_code} {resp.text}")
+        except Exception as e:
+            print(f"[!] Error WhatsApp ({phone}): {e}")
+        time.sleep(1.5)
 
 def login():
     headers = {"Content-Type": "application/json", "Accept": "application/json", "User-Agent": "Mozilla/5.0"}
