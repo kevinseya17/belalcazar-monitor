@@ -1,0 +1,38 @@
+name: Vigilante Belalcazar 24-7
+
+on:
+  schedule:
+    # Se ejecuta cada 30 minutos dia y noche
+    - cron: '*/30 * * * *'
+  workflow_dispatch: # Permite dispararlo manualmente cuando quieras desde GitHub
+
+jobs:
+  vigilar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar codigo
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Ejecutar revision de comprobantes
+        env:
+          NIT: '901369891'
+          PASSWORD: '901369891'
+          WHATSAPP_PHONE: '573137493049'
+          CALLMEBOT_APIKEY: '5358764'
+        run: python run_check.py
+
+      - name: Guardar registro de comprobantes vistos
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add vistos.json || true
+          git commit -m 'Actualizar registro de comprobantes vistos [skip ci]' || true
+          git push || true
