@@ -32,10 +32,10 @@ jobs:
           CALLMEBOT_APIKEY: '5358764'
         run: python run_check.py
 
-      - name: Guardar registro de comprobantes vistos
+      - name: Guardar registro y PDFs generados
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add vistos.json || true
-          git commit -m 'Actualizar registro de comprobantes vistos [skip ci]' || true
+          git add vistos.json pdfs/ || true
+          git commit -m 'Actualizar registro y PDFs [skip ci]' || true
           git push || true

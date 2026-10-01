@@ -1,5 +1,5 @@
 """
-Ejecutor de revisión para GitHub Actions o Cron Jobs
+Ejecutor de revisión para GitHub Actions / Cron Jobs con generación automática de PDF
 """
 
 import os
@@ -9,6 +9,7 @@ import json
 import urllib.parse
 import datetime
 import requests
+from pdf_generator import generar_pdf_comprobante
 
 NIT = os.environ.get("NIT", "901369891")
 PASSWORD = os.environ.get("PASSWORD", "901369891")
@@ -17,6 +18,7 @@ CALLMEBOT_APIKEY = os.environ.get("CALLMEBOT_APIKEY", "5358764")
 
 API_BASE = "https://proveedor.supermercadobelalcazar.com/api"
 VISTOS_FILE = "vistos.json"
+PDF_DIR = "pdfs"
 
 VISTOS_INICIALES = [
   "abastecemos_001-CE-341747", "abastecemos_001-CE-345103", "abastecemos_001-CE-343868",
@@ -77,6 +79,7 @@ def main():
     ahora = datetime.datetime.now()
     print(f"[{ahora.strftime('%Y-%m-%d %H:%M:%S')}] Iniciando revisión en GitHub Actions...")
     
+    os.makedirs(PDF_DIR, exist_ok=True)
     token = login()
     if not token:
         print("[!] No se pudo iniciar sesión.")
@@ -113,6 +116,7 @@ def main():
                         if clave not in vistos:
                             c["clave_unica"] = clave
                             c["empresa_nombre"] = emp_nombre
+                            c["empresa_codigo"] = emp_code
                             nuevos.append(c)
             except Exception as e:
                 print(f"[!] Error {emp_code} {anio}-{mes}: {e}")
@@ -126,11 +130,33 @@ def main():
     print(f"[+] ¡{len(nuevos)} nuevo(s) comprobante(s) detectado(s)!")
     for c in nuevos:
         nro = c.get("numero_completo") or c.get("numero")
+        emp_code = c.get("empresa_codigo", "abastecemos")
         val = float(c.get("valor", 0) or 0)
         emp = c.get("empresa_nombre")
         fec = c.get("fecha")
         con = c.get("concepto", "Cancelación de facturas")
-        
+        clean_nro = str(nro).replace("/", "_").replace("\\", "_")
+        pdf_path = os.path.join(PDF_DIR, f"{clean_nro}.pdf")
+
+        # 1. Generar PDF en la nube
+        try:
+            det_resp = requests.post(
+                f"{API_BASE}/comprobantes/generate_comprobante.php",
+                json={"comprobante": nro, "empresa": emp_code},
+                headers=headers,
+                timeout=25
+            )
+            det_data = det_resp.json()
+            if det_data.get("success"):
+                generar_pdf_comprobante(det_data, pdf_path)
+                print(f"[OK] PDF generado: {pdf_path}")
+        except Exception as e_pdf:
+            print(f"[!] Error generando PDF para {nro}: {e_pdf}")
+
+        # 2. Enlace directo para abrir o descargar el PDF desde el celular
+        pdf_link = f"https://github.com/kevinseya17/belalcazar-monitor/blob/main/pdfs/{clean_nro}.pdf"
+
+        # 3. Notificación a WhatsApp
         msg = (
             f"🔔 ¡NUEVO COMPROBANTE DE BELALCÁZAR!\n\n"
             f"📄 Nro: {nro}\n"
@@ -138,7 +164,7 @@ def main():
             f"📅 Fecha: {fec}\n"
             f"💰 Valor: ${val:,.0f} COP\n"
             f"📝 Concepto: {con}\n\n"
-            f"☁️ Alerta 24/7 generada automáticamente desde la nube."
+            f"📥 Ver/Descargar PDF desde tu celular:\n{pdf_link}"
         )
         enviar_alerta_whatsapp(msg)
         vistos.add(c["clave_unica"])
