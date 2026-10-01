@@ -4,7 +4,10 @@ on:
   schedule:
     # Se ejecuta cada 30 minutos dia y noche
     - cron: '*/30 * * * *'
-  workflow_dispatch: # Permite dispararlo manualmente cuando quieras desde GitHub
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   vigilar:
