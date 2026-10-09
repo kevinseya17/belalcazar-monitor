@@ -141,6 +141,7 @@ def main():
         pdf_path = os.path.join(PDF_DIR, f"{clean_nro}.pdf")
 
         # 1. Generar PDF en la nube
+        pdf_direct_url = ""
         try:
             det_resp = requests.post(
                 f"{API_BASE}/comprobantes/generate_comprobante.php",
@@ -152,11 +153,26 @@ def main():
             if det_data.get("success"):
                 generar_pdf_comprobante(det_data, pdf_path)
                 print(f"[OK] PDF generado: {pdf_path}")
+
+                # Subida para enlace de descarga directa en celular (sin GitHub ni contraseñas)
+                try:
+                    with open(pdf_path, 'rb') as f_pdf:
+                        r_up = requests.post(
+                            "https://catbox.moe/user/api.php",
+                            data={"reqtype": "fileupload"},
+                            files={"fileToUpload": f_pdf},
+                            timeout=25
+                        )
+                        if r_up.status_code == 200 and r_up.text.startswith("http"):
+                            pdf_direct_url = r_up.text.strip()
+                            print(f"[OK] Enlace directo generado: {pdf_direct_url}")
+                except Exception as e_up:
+                    print(f"[!] Error en subida directa: {e_up}")
         except Exception as e_pdf:
             print(f"[!] Error generando PDF para {nro}: {e_pdf}")
 
-        # 2. Enlace directo para abrir o descargar el PDF desde el celular
-        pdf_link = f"https://github.com/kevinseya17/belalcazar-monitor/blob/main/pdfs/{clean_nro}.pdf"
+        # 2. Enlace de descarga para el mensaje
+        pdf_link = pdf_direct_url or f"https://github.com/kevinseya17/belalcazar-monitor/blob/main/pdfs/{clean_nro}.pdf"
 
         # 3. Notificación a WhatsApp
         msg = (
@@ -166,7 +182,7 @@ def main():
             f"📅 Fecha: {fec}\n"
             f"💰 Valor: ${val:,.0f} COP\n"
             f"📝 Concepto: {con}\n\n"
-            f"📥 Ver/Descargar PDF desde tu celular:\n{pdf_link}"
+            f"📥 Descarga directa del PDF:\n{pdf_link}"
         )
         enviar_alerta_whatsapp(msg)
         vistos.add(c["clave_unica"])
