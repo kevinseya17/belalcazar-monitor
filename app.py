@@ -15,10 +15,10 @@ from flask import Flask, jsonify
 
 app = Flask(__name__)
 
-NIT = os.environ.get("NIT", "901369891")
-PASSWORD = os.environ.get("PASSWORD", "901369891")
-WHATSAPP_PHONE = os.environ.get("WHATSAPP_PHONE", "573137493049")
-CALLMEBOT_APIKEY = os.environ.get("CALLMEBOT_APIKEY", "5358764")
+NIT = os.environ.get("NIT", "")
+PASSWORD = os.environ.get("PASSWORD", "")
+WHATSAPP_PHONE = os.environ.get("WHATSAPP_PHONE", "")
+CALLMEBOT_APIKEY = os.environ.get("CALLMEBOT_APIKEY", "")
 INTERVALO_MINUTOS = int(os.environ.get("INTERVALO_MINUTOS", "30"))
 
 API_BASE = "https://proveedor.supermercadobelalcazar.com/api"

@@ -8,15 +8,34 @@ import time
 import json
 import urllib.parse
 import datetime
+import subprocess
 import requests
 from pdf_generator import generar_pdf_comprobante
 
-NIT = os.environ.get("NIT", "901369891")
-PASSWORD = os.environ.get("PASSWORD", "901369891")
-DESTINATARIOS = [
-    {"phone": "573137493049", "apikey": "5358764"},
-    {"phone": "573142407755", "apikey": "3564255"}
-]
+NIT = os.environ.get("NIT", "")
+PASSWORD = os.environ.get("PASSWORD", "")
+
+dest_raw = os.environ.get("DESTINATARIOS_JSON", "")
+if dest_raw:
+    try:
+        DESTINATARIOS = json.loads(dest_raw)
+    except Exception as e:
+        print(f"[!] Error leyendo DESTINATARIOS_JSON: {e}")
+        DESTINATARIOS = []
+else:
+    DESTINATARIOS = []
+
+# Fallback si se prueba localmente en la máquina del usuario
+if not NIT and os.path.exists("../config.json"):
+    try:
+        with open("../config.json", "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+            NIT = cfg.get("nit", "")
+            PASSWORD = cfg.get("password", "")
+            if not DESTINATARIOS:
+                DESTINATARIOS = cfg.get("destinatarios", [])
+    except Exception:
+        pass
 
 API_BASE = "https://proveedor.supermercadobelalcazar.com/api"
 VISTOS_FILE = "vistos.json"
@@ -48,11 +67,32 @@ def guardar_vistos(vistos):
     with open(VISTOS_FILE, "w", encoding="utf-8") as f:
         json.dump(list(vistos), f, indent=2)
 
+def sincronizar_github():
+    """Sube los PDFs y vistos.json a GitHub antes de notificar para que el enlace esté activo de inmediato."""
+    if os.environ.get("GITHUB_ACTIONS"):
+        try:
+            subprocess.run(["git", "config", "--global", "user.name", "github-actions[bot]"], check=False)
+            subprocess.run(["git", "config", "--global", "user.email", "github-actions[bot]@users.noreply.github.com"], check=False)
+            subprocess.run(["git", "add", "vistos.json", "pdfs/"], check=False)
+            subprocess.run(["git", "commit", "-m", "Guardar comprobantes y PDFs [skip ci]"], check=False)
+            res = subprocess.run(["git", "push"], capture_output=True, text=True)
+            if res.returncode == 0:
+                print("[OK] PDFs y registro sincronizados en GitHub exitosamente.")
+            else:
+                print(f"[!] Push salida: {res.stderr}")
+        except Exception as e:
+            print(f"[!] Advertencia al sincronizar en git: {e}")
+
 def enviar_alerta_whatsapp(mensaje: str):
+    if not DESTINATARIOS:
+        print("[!] No hay destinatarios configurados para enviar alerta.")
+        return
     encoded_text = urllib.parse.quote(mensaje)
     for dest in DESTINATARIOS:
-        phone = dest["phone"].replace("+", "").replace(" ", "").strip()
-        apikey = dest["apikey"]
+        phone = dest.get("phone", "").replace("+", "").replace(" ", "").strip()
+        apikey = dest.get("apikey", "").strip()
+        if not phone or not apikey:
+            continue
         url = f"https://api.callmebot.com/whatsapp.php?phone={phone}&text={encoded_text}&apikey={apikey}"
         try:
             resp = requests.get(url, timeout=20)
@@ -65,6 +105,9 @@ def enviar_alerta_whatsapp(mensaje: str):
         time.sleep(1.5)
 
 def login():
+    if not NIT or not PASSWORD:
+        print("[!] Falta configurar NIT o PASSWORD en variables de entorno o secrets.")
+        return None
     headers = {"Content-Type": "application/json", "Accept": "application/json", "User-Agent": "Mozilla/5.0"}
     payload = {"nit": NIT, "password": PASSWORD}
     try:
@@ -130,18 +173,15 @@ def main():
         return
 
     print(f"[+] ¡{len(nuevos)} nuevo(s) comprobante(s) detectado(s)!")
+    
+    # 1. Generar todos los PDFs de los nuevos comprobantes
+    comprobantes_procesados = []
     for c in nuevos:
         nro = c.get("numero_completo") or c.get("numero")
         emp_code = c.get("empresa_codigo", "abastecemos")
-        val = float(c.get("valor", 0) or 0)
-        emp = c.get("empresa_nombre")
-        fec = c.get("fecha")
-        con = c.get("concepto", "Cancelación de facturas")
         clean_nro = str(nro).replace("/", "_").replace("\\", "_")
         pdf_path = os.path.join(PDF_DIR, f"{clean_nro}.pdf")
 
-        # 1. Generar PDF en la nube
-        pdf_direct_url = ""
         try:
             det_resp = requests.post(
                 f"{API_BASE}/comprobantes/generate_comprobante.php",
@@ -153,28 +193,29 @@ def main():
             if det_data.get("success"):
                 generar_pdf_comprobante(det_data, pdf_path)
                 print(f"[OK] PDF generado: {pdf_path}")
-
-                # Subida para enlace de descarga directa en celular (sin GitHub ni contraseñas)
-                try:
-                    with open(pdf_path, 'rb') as f_pdf:
-                        r_up = requests.post(
-                            "https://catbox.moe/user/api.php",
-                            data={"reqtype": "fileupload"},
-                            files={"fileToUpload": f_pdf},
-                            timeout=25
-                        )
-                        if r_up.status_code == 200 and r_up.text.startswith("http"):
-                            pdf_direct_url = r_up.text.strip()
-                            print(f"[OK] Enlace directo generado: {pdf_direct_url}")
-                except Exception as e_up:
-                    print(f"[!] Error en subida directa: {e_up}")
         except Exception as e_pdf:
             print(f"[!] Error generando PDF para {nro}: {e_pdf}")
 
-        # 2. Enlace de descarga para el mensaje
-        pdf_link = pdf_direct_url or f"https://github.com/kevinseya17/belalcazar-monitor/blob/main/pdfs/{clean_nro}.pdf"
+        vistos.add(c["clave_unica"])
+        comprobantes_procesados.append(c)
 
-        # 3. Notificación a WhatsApp
+    # 2. Guardar vistos actualizados en disco
+    guardar_vistos(vistos)
+
+    # 3. Subir de inmediato los PDFs y vistos.json a GitHub
+    sincronizar_github()
+
+    # 4. Enviar las alertas a WhatsApp con el enlace directo raw (descarga limpia con 1 clic)
+    for c in comprobantes_procesados:
+        nro = c.get("numero_completo") or c.get("numero")
+        val = float(c.get("valor", 0) or 0)
+        emp = c.get("empresa_nombre")
+        fec = c.get("fecha")
+        con = c.get("concepto", "Cancelación de facturas")
+        clean_nro = str(nro).replace("/", "_").replace("\\", "_")
+
+        pdf_link = f"https://raw.githubusercontent.com/kevinseya17/belalcazar-monitor/main/pdfs/{clean_nro}.pdf"
+
         msg = (
             f"🔔 ¡NUEVO COMPROBANTE DE BELALCÁZAR!\n\n"
             f"📄 Nro: {nro}\n"
@@ -185,11 +226,9 @@ def main():
             f"📥 Descarga directa del PDF:\n{pdf_link}"
         )
         enviar_alerta_whatsapp(msg)
-        vistos.add(c["clave_unica"])
         time.sleep(2)
 
-    guardar_vistos(vistos)
-    print("[OK] Revisión completada y registros actualizados.")
+    print("[OK] Revisión completada y alertas enviadas.")
 
 if __name__ == "__main__":
     main()

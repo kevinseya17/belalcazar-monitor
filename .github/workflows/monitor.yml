@@ -26,10 +26,9 @@ jobs:
 
       - name: Ejecutar revision de comprobantes
         env:
-          NIT: '901369891'
-          PASSWORD: '901369891'
-          WHATSAPP_PHONE: '573137493049'
-          CALLMEBOT_APIKEY: '5358764'
+          NIT: ${{ secrets.NIT }}
+          PASSWORD: ${{ secrets.PASSWORD }}
+          DESTINATARIOS_JSON: ${{ secrets.DESTINATARIOS_JSON }}
         run: python run_check.py
 
       - name: Guardar registro y PDFs generados
