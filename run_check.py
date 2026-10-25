@@ -26,9 +26,9 @@ else:
     DESTINATARIOS = []
 
 # Fallback si se prueba localmente en la máquina del usuario
-if not NIT and os.path.exists("../config.json"):
+if not NIT and os.path.exists(r"C:\Users\kevin17\.gemini\antigravity\scratch\config.json"):
     try:
-        with open("../config.json", "r", encoding="utf-8") as f:
+        with open(r"C:\Users\kevin17\.gemini\antigravity\scratch\config.json", "r", encoding="utf-8") as f:
             cfg = json.load(f)
             NIT = cfg.get("nit", "")
             PASSWORD = cfg.get("password", "")
@@ -73,7 +73,7 @@ def sincronizar_github():
         try:
             subprocess.run(["git", "config", "--global", "user.name", "github-actions[bot]"], check=False)
             subprocess.run(["git", "config", "--global", "user.email", "github-actions[bot]@users.noreply.github.com"], check=False)
-            subprocess.run(["git", "add", "vistos.json", "pdfs/"], check=False)
+            subprocess.run(["git", "add", "-A"], check=False)
             subprocess.run(["git", "commit", "-m", "Guardar comprobantes y PDFs [skip ci]"], check=False)
             res = subprocess.run(["git", "push"], capture_output=True, text=True)
             if res.returncode == 0:
@@ -174,7 +174,7 @@ def main():
 
     print(f"[+] ¡{len(nuevos)} nuevo(s) comprobante(s) detectado(s)!")
     
-    # 1. Generar todos los PDFs de los nuevos comprobantes
+    # 1. Generar todos los PDFs de los nuevos comprobantes con reintentos
     comprobantes_procesados = []
     for c in nuevos:
         nro = c.get("numero_completo") or c.get("numero")
@@ -182,22 +182,43 @@ def main():
         clean_nro = str(nro).replace("/", "_").replace("\\", "_")
         pdf_path = os.path.join(PDF_DIR, f"{clean_nro}.pdf")
 
-        try:
-            det_resp = requests.post(
-                f"{API_BASE}/comprobantes/generate_comprobante.php",
-                json={"comprobante": nro, "empresa": emp_code},
-                headers=headers,
-                timeout=25
-            )
-            det_data = det_resp.json()
-            if det_data.get("success"):
-                generar_pdf_comprobante(det_data, pdf_path)
-                print(f"[OK] PDF generado: {pdf_path}")
-        except Exception as e_pdf:
-            print(f"[!] Error generando PDF para {nro}: {e_pdf}")
+        pdf_generado = False
+        for intento in range(3):
+            try:
+                det_resp = requests.post(
+                    f"{API_BASE}/comprobantes/generate_comprobante.php",
+                    json={"comprobante": nro, "empresa": emp_code},
+                    headers=headers,
+                    timeout=25
+                )
+                if det_resp.status_code == 200:
+                    det_data = det_resp.json()
+                    if det_data.get("success") or "tercero" in det_data:
+                        generar_pdf_comprobante(det_data, pdf_path)
+                        if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 500:
+                            pdf_generado = True
+                            print(f"[OK] PDF generado: {pdf_path}")
+                            break
+                        else:
+                            print(f"[!] Intento {intento+1}: Archivo PDF no se guardó en disco.")
+                    else:
+                        print(f"[!] Intento {intento+1}: Respuesta sin datos de comprobante: {det_data}")
+                else:
+                    print(f"[!] Intento {intento+1}: HTTP {det_resp.status_code} desde Belalcázar.")
+            except Exception as e_pdf:
+                print(f"[!] Intento {intento+1} error generando PDF para {nro}: {e_pdf}")
+            time.sleep(2)
+
+        if not pdf_generado:
+            print(f"[!] No se pudo generar PDF para {nro}. NO se marcará como visto para reintentar en el siguiente ciclo.")
+            continue
 
         vistos.add(c["clave_unica"])
         comprobantes_procesados.append(c)
+
+    if not comprobantes_procesados:
+        print("[i] No se procesó ningún comprobante con PDF válido.")
+        return
 
     # 2. Guardar vistos actualizados en disco
     guardar_vistos(vistos)
@@ -205,7 +226,7 @@ def main():
     # 3. Subir de inmediato los PDFs y vistos.json a GitHub
     sincronizar_github()
 
-    # 4. Enviar las alertas a WhatsApp con el enlace directo raw (descarga limpia con 1 clic)
+    # 4. Enviar las alertas a WhatsApp con el visor web y descarga directa
     for c in comprobantes_procesados:
         nro = c.get("numero_completo") or c.get("numero")
         val = float(c.get("valor", 0) or 0)
@@ -214,7 +235,8 @@ def main():
         con = c.get("concepto", "Cancelación de facturas")
         clean_nro = str(nro).replace("/", "_").replace("\\", "_")
 
-        pdf_link = f"https://raw.githubusercontent.com/kevinseya17/belalcazar-monitor/main/pdfs/{clean_nro}.pdf"
+        pdf_view_link = f"https://kevinseya17.github.io/belalcazar-monitor/ver.html?pdf={clean_nro}.pdf"
+        pdf_direct_link = f"https://kevinseya17.github.io/belalcazar-monitor/pdfs/{clean_nro}.pdf"
 
         msg = (
             f"🔔 ¡NUEVO COMPROBANTE DE BELALCÁZAR!\n\n"
@@ -223,7 +245,8 @@ def main():
             f"📅 Fecha: {fec}\n"
             f"💰 Valor: ${val:,.0f} COP\n"
             f"📝 Concepto: {con}\n\n"
-            f"📥 Descarga directa del PDF:\n{pdf_link}"
+            f"📱 Ver comprobante en tu celular:\n{pdf_view_link}\n\n"
+            f"📥 Descarga directa del archivo PDF:\n{pdf_direct_link}"
         )
         enviar_alerta_whatsapp(msg)
         time.sleep(2)
